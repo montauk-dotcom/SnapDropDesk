@@ -52,9 +52,17 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx electron-builder ${{ matrix.args }} --publish never
+      - name: Build installers
+        shell: bash
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
+        run: |
+          set -o pipefail
+          if ! npx electron-builder ${{ matrix.args }} --publish never 2>&1 | tee build.log; then
+            # Surface the error as annotations (readable without signing in)
+            grep -E "⨯|rror|failed" build.log | tail -15 | while IFS= read -r l; do echo "::error::${l:0:900}"; done
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: installers-${{ matrix.os }}

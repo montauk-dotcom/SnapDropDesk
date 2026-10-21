@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#ff5a1f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>SnapDrop</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    body { min-height: 100dvh; padding: max(16px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom)); }
+    main { max-width: 520px; margin: 0 auto; display: grid; gap: 14px; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 4px 2px 6px; }
+    .target { padding: 14px 16px; display: flex; align-items: center; gap: 12px; }
+    .target .icon { width: 40px; height: 40px; border-radius: 10px; background: var(--bg); display: grid; place-items: center; font-size: 20px; }
+    .target b { display: block; font-size: 16px; }
+    .drop { position: relative; display: grid; place-items: center; text-align: center; gap: 6px; padding: 34px 16px; border: 2px dashed var(--line); border-radius: var(--radius); background: var(--surface); transition: 0.15s; }
+    .drop.hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, var(--surface)); }
+    .drop .big { font-size: 18px; font-weight: 700; }
+    .drop input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+    .text { padding: 14px; display: grid; gap: 10px; }
+    .text .row { display: flex; justify-content: space-between; align-items: center; }
+    .list { display: grid; gap: 8px; }
+    .item { padding: 12px 14px; display: grid; gap: 8px; }
+    .item .top { display: flex; align-items: center; gap: 10px; }
+    .item .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+    .item .meta { font-size: 12px; color: var(--muted); }
+    .item pre { margin: 0; white-space: pre-wrap; word-break: break-word; font: 14px/1.4 var(--sans); max-height: 160px; overflow: auto; }
+    .item .btn { padding: 7px 12px; font-size: 13px; }
+    .empty { text-align: center; color: var(--muted); font-size: 13px; padding: 8px; }
+    .gate { padding: 22px 18px; text-align: center; display: grid; gap: 8px; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="brand"><span class="brand-mark"></span>SnapDrop</div>
+      <span class="status"><span class="dot" id="dot"></span><span id="statusText">connecting…</span></span>
+    </header>
+
+    <section class="card gate" id="gate" hidden>
+      <b>Scan the QR code again</b>
+      <span class="meta">Open SnapDrop Desk on your computer → “Connect phone”. The link from the QR code lets this phone in.</span>
+    </section>
+
+    <div id="app" hidden>
+      <div style="display:grid;gap:14px">
+        <section class="card target">
+          <div class="icon" id="targetIcon">💻</div>
+          <div><span class="label">Sending to</span><b id="targetName">—</b></div>
+        </section>
+
+        <label class="drop" id="drop">
+          <input type="file" id="fileInput" multiple>
+          <div class="big">Tap to send files</div>
+          <div class="meta">Photos, videos, documents — straight over Wi‑Fi</div>
+        </label>
+        <div class="bar" id="bar" hidden><i></i></div>
+
+        <section class="card text">
+          <div class="row"><span class="label">Text</span><button class="btn ghost" id="pasteBtn" style="padding:5px 10px;font-size:12px">Paste</button></div>
+          <textarea id="text" placeholder="Link, code, address…"></textarea>
+          <button class="btn accent" id="sendText">Send text</button>
+        </section>
+
+        <div class="label" style="padding:4px 2px 0">Received</div>
+        <div class="list" id="inbox"><div class="empty" id="empty">Files and text sent from the computer appear here.</div></div>
+      </div>
+    </div>
+  </main>
+  <div class="toast" id="toast"></div>
+  <script src="app.js"></script>
+</body>
+</html>

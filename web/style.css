@@ -1,0 +1,58 @@
+/* SnapDrop Desk — shared look for the phone client and the desktop drop window. */
+:root {
+  --bg: #f4f1ea;
+  --surface: #fffdf8;
+  --ink: #1b1a17;
+  --muted: #6f6a60;
+  --line: #e2ddd2;
+  --accent: #ff5a1f;
+  --accent-ink: #ffffff;
+  --ok: #1f9d55;
+  --warn: #c2410c;
+  --radius: 14px;
+  --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI Variable", "Segoe UI", Inter, Roboto, sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12110f;
+    --surface: #1c1b18;
+    --ink: #f2efe8;
+    --muted: #9d978b;
+    --line: #2e2c27;
+    --accent: #ff6b35;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 var(--sans); -webkit-font-smoothing: antialiased; }
+button, input, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+
+.brand { display: flex; align-items: center; gap: 8px; font-weight: 700; letter-spacing: -0.01em; }
+.brand-mark { width: 22px; height: 22px; border-radius: 7px; background: var(--accent); position: relative; flex: none; }
+.brand-mark::after { content: ""; position: absolute; inset: 6px 7px 5px; border: 2.5px solid var(--accent-ink); border-top: 0; border-radius: 0 0 6px 6px; }
+
+.status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.dot.on { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 20%, transparent); }
+.dot.off { background: var(--warn); }
+
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+.label { font: 600 11px/1 var(--mono); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+
+.btn { border: 0; border-radius: 10px; padding: 10px 14px; background: var(--ink); color: var(--bg); font-weight: 600; }
+.btn.accent { background: var(--accent); color: var(--accent-ink); }
+.btn.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+.btn:disabled { opacity: 0.45; cursor: default; }
+
+textarea { width: 100%; resize: vertical; min-height: 64px; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--bg); outline: none; }
+textarea:focus { border-color: var(--accent); }
+
+.bar { height: 4px; border-radius: 4px; background: var(--line); overflow: hidden; }
+.bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 0.15s; }
+
+.toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%) translateY(20px); opacity: 0; background: var(--ink); color: var(--bg); padding: 9px 14px; border-radius: 10px; font-size: 13px; transition: 0.2s; pointer-events: none; z-index: 10; max-width: calc(100vw - 32px); }
+.toast.show { opacity: 1; transform: translateX(-50%); }
+[hidden] { display: none !important; }

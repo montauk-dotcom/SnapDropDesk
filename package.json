@@ -28,14 +28,73 @@
   "build": {
     "appId": "dev.snapdrop.desk",
     "productName": "SnapDrop Desk",
-    "files": ["src/**/*", "web/**/*", "assets/**/*", "package.json"],
+    "artifactName": "SnapDrop-Desk-${version}-${os}-${arch}.${ext}",
+    "files": [
+      "src/**/*",
+      "web/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "dist"
+    },
     "mac": {
       "category": "public.app-category.productivity",
       "icon": "assets/icon.png",
-      "extendInfo": { "LSUIElement": true }
+      "extendInfo": {
+        "LSUIElement": true
+      },
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "identity": "-"
     },
-    "win": { "target": ["nsis", "portable"], "icon": "assets/icon.png" },
-    "linux": { "target": ["AppImage", "deb"], "category": "Utility", "icon": "assets/icon.png" },
-    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true }
-  }
+    "dmg": {
+      "title": "SnapDrop Desk"
+    },
+    "win": {
+      "icon": "assets/icon.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "portable": {
+      "artifactName": "SnapDrop-Desk-${version}-win-portable.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "runAfterFinish": true,
+      "shortcutName": "SnapDrop Desk"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Utility",
+      "icon": "assets/icon.png",
+      "maintainer": "SnapDrop Desk"
+    }
+  },
+  "homepage": "https://github.com/montauk-dotcom/SnapDropDesk"
 }

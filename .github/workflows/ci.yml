@@ -15,8 +15,8 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -39,15 +39,15 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-            args: --mac
+            args: --mac dir --arm64 --x64
           - os: windows-latest
             args: --win
           - os: ubuntu-latest
             args: --linux
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -63,6 +63,21 @@ jobs:
             grep -E "⨯|rror|failed" build.log | tail -15 | while IFS= read -r l; do echo "::error::${l:0:900}"; done
             exit 1
           fi
+      # electron-builder's own DMG step mounts a temp volume and the GitHub macOS runners
+      # often can't detach it ("Resource busy"). hdiutil create -srcfolder never mounts anything.
+      - name: Package .dmg (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          for d in dist/mac-arm64 dist/mac; do
+            [ -d "$d" ] || continue
+            arch=$([ "$d" = dist/mac-arm64 ] && echo arm64 || echo x64)
+            stage=$(mktemp -d)
+            cp -R "$d/SnapDrop Desk.app" "$stage/"
+            ln -s /Applications "$stage/Applications"
+            hdiutil create -volname "SnapDrop Desk" -srcfolder "$stage" -ov -format UDZO "dist/SnapDrop-Desk-$VERSION-mac-$arch.dmg"
+          done
+          ls -la dist/*.dmg
       - uses: actions/upload-artifact@v4
         with:
           name: installers-${{ matrix.os }}
@@ -79,7 +94,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - id: v
         run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v4

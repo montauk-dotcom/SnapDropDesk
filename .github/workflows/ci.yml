@@ -122,20 +122,3 @@ jobs:
             **Первый запуск:** сборки не подписаны.
             Windows: «Windows защитил ваш компьютер» → *Подробнее* → *Выполнить в любом случае*; затем разрешите доступ в брандмауэре (частные сети).
             Mac: перетащите в «Программы», затем правый клик → *Открыть* → *Открыть*. Если пишет «повреждено»: `xattr -cr "/Applications/SnapDrop Desk.app"`.
-
-      # Also keep the Windows installer and the Mac .dmg files in the repo (installers/).
-      # GitHub refuses files over 100 MB in git; those stay in the release only.
-      - name: Commit installers to the repository
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin main && git checkout -B main origin/main
-          mkdir -p installers
-          for f in installers-dl/*.dmg installers-dl/*-win-x64.exe; do
-            [ -f "$f" ] || continue
-            size=$(stat -c%s "$f")
-            if [ "$size" -lt 99000000 ]; then cp "$f" installers/; else echo "::warning::$(basename "$f") is over 100 MB — kept in the release only"; fi
-          done
-          git add installers
-          git diff --cached --quiet || git commit -m "Installers v${{ steps.v.outputs.version }} [skip ci]"
-          git push origin main

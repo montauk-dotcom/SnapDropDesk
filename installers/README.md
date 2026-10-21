@@ -6,7 +6,7 @@
 | Mac на M1–M4 | `SnapDrop-Desk-<версия>-mac-arm64.dmg` |
 | Mac на Intel | `SnapDrop-Desk-<версия>-mac-x64.dmg` |
 
-Файлы .dmg собирает GitHub Actions на macOS и кладёт сюда автоматически.
+Файлы .dmg больше 100 МБ, поэтому хранятся через Git LFS: скачивайте их кнопкой «Download» на странице файла (или `git lfs pull` после клонирования). GitHub Actions собирает их на macOS и кладёт сюда автоматически.
 Portable-версия Windows и сборки Linux — в [Releases](https://github.com/montauk-dotcom/SnapDropDesk/releases).
 
 Сборки не подписаны. Windows: «Подробнее → Выполнить в любом случае», разрешить брандмауэр.

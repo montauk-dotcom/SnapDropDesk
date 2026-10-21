@@ -1,0 +1,45 @@
+name: Installers to repo
+
+# Copies the Windows installer and the Mac .dmg files from the latest release into installers/.
+# The .dmg files are over GitHub's 100 MB git limit, so they are stored with Git LFS.
+on:
+  release:
+    types: [published]
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/installers-to-repo.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          lfs: true
+      - name: Download installers from the latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          gh release view "v$VERSION" >/dev/null 2>&1 || { echo "No release v$VERSION yet"; exit 0; }
+          rm -f installers/*.dmg installers/*.exe
+          gh release download "v$VERSION" --dir installers --pattern '*.dmg' --pattern '*-win-x64.exe'
+          ls -la installers
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git lfs install
+          git add .gitattributes installers
+          git diff --cached --quiet && { echo "Nothing changed"; exit 0; }
+          git commit -m "Installers from release [skip ci]"
+          git push origin main

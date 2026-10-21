@@ -49,8 +49,8 @@
 Нужен Node.js 20+.
 
 ```bash
-git clone https://github.com/<you>/snapdrop-desk.git
-cd snapdrop-desk
+git clone https://github.com/montauk-dotcom/SnapDropDesk.git
+cd SnapDropDesk
 npm install
 npm start
 ```

@@ -5,6 +5,7 @@ on:
     branches: [main]
     tags: ['v*']
   pull_request:
+  workflow_dispatch: # Actions → CI → Run workflow: builds installers and publishes a release
 
 jobs:
   test:
@@ -28,9 +29,9 @@ jobs:
           SNAPDROP_USER_DATA=$RUNNER_TEMP/ud SNAPDROP_SMOKE=$RUNNER_TEMP/smoke.png xvfb-run -a npx electron . --no-sandbox | tee smoke.log
           grep -q "SMOKE OK" smoke.log
 
-  # Installers are built on each version tag:  git tag v0.1.1 && git push --tags
+  # Installers: push a tag (git tag v0.1.1 && git push --tags) or press “Run workflow” in Actions.
   build:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     needs: test
     strategy:
       fail-fast: false
@@ -69,12 +70,18 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v4
         with:
           path: installers
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', steps.v.outputs.version) }}
+          target_commitish: ${{ github.sha }}
+          name: SnapDrop Desk ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', steps.v.outputs.version) }}
           files: installers/*
           body: |
             ## Скачать

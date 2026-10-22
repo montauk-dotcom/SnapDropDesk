@@ -11,7 +11,7 @@ const DEFAULTS = {
   clipboardSync: false,
   notifications: true,
   copyIncomingText: true,
-  menuBarTitle: 'SDD', // text next to the menu-bar icon on macOS ('' = icon only)
+  menuBarLabel: '', // optional text next to the menu-bar icon on macOS ('' = icon only)
   showInDock: false,
   theme: 'system',     // system | light | dark
   accent: '#ff5a1f',
@@ -28,6 +28,7 @@ class Settings {
       ...data,
     };
     // Generated once and kept: identity must survive restarts so pairings keep working.
+    delete this.data.menuBarTitle; // ≤0.1.4 showed “SDD” by default; now icon only
     this.data.id ||= randomId(8);
     this.data.webToken ||= randomId(12);
     this.data.trust ||= { incoming: {}, outgoing: {} };

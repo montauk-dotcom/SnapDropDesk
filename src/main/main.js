@@ -80,7 +80,7 @@ if (!app.requestSingleInstanceLock()) {
       settings.set('welcomed', true);
       win.webContents.once('did-finish-load', () => {
         showWindow('tray');
-        send('toast', isMac ? 'SnapDrop Desk lives in the menu bar — look for “SDD”' : 'SnapDrop Desk lives in the tray');
+        send('toast', isMac ? 'SnapDrop Desk lives in the menu bar — look for the SnapDrop icon' : 'SnapDrop Desk lives in the tray');
       });
     }
 
@@ -275,7 +275,7 @@ if (!app.requestSingleInstanceLock()) {
         downloadDir: settings.get('downloadDir'),
         sendTo: integration.isInstalled(),
         launchAtLogin: app.getLoginItemSettings().openAtLogin,
-        menuBarTitle: settings.get('menuBarTitle'),
+        menuBarTitle: settings.get('menuBarLabel'),
         theme: settings.get('theme'),
         accent: settings.get('accent'),
         showInDock: settings.get('showInDock'),
@@ -294,16 +294,18 @@ if (!app.requestSingleInstanceLock()) {
   }
 
   /* ---------------------------------------------------------------- tray */
+  let trayIconMissing = false;
+
   function createTray() {
     let img = nativeImage.createFromPath(path.join(ASSETS, isMac ? 'trayTemplate.png' : 'tray.png'));
-    if (img.isEmpty()) img = nativeImage.createEmpty(); // the “SDD” title alone still shows on macOS
+    trayIconMissing = img.isEmpty(); // then fall back to a text label so something is visible
     if (isMac) img.setTemplateImage(true);
     tray = new Tray(img);
     tray.setToolTip('SnapDrop Desk');
     setTrayTitle();
     tray.on('drop-files', (_e, files) => queueFiles(files)); // macOS: drop straight onto the menu-bar icon
     if (!isMac) tray.on('click', () => toggleWindow('tray')); // Windows / Linux: click opens the window
-    // macOS: like most menu-bar apps (AmneziaVPN etc.) a click on “SDD” opens this menu.
+    // macOS: like most menu-bar apps (AmneziaVPN etc.) a click on the icon opens this menu.
     // Windows / Linux: the same menu on right-click.
     tray.setContextMenu(buildMenu());
     node.on('peer-up', refreshTray);
@@ -349,10 +351,10 @@ if (!app.requestSingleInstanceLock()) {
     ]);
   }
 
-  /** macOS menu bar: “SDD” next to the icon (or transfer progress while sending). */
+  /** macOS menu bar: icon, optional label, and transfer progress while sending (“42%”). */
   function setTrayTitle(extra = null) {
     if (!isMac || !tray) return;
-    const label = settings.get('menuBarTitle') || '';
+    const label = settings.get('menuBarLabel') || (trayIconMissing ? 'SDD' : '');
     const text = [label, extra].filter(Boolean).join(' ');
     tray.setTitle(text ? ` ${text}` : '', { fontType: 'monospacedDigit' });
   }
@@ -396,10 +398,10 @@ if (!app.requestSingleInstanceLock()) {
     dialog.showMessageBox({
       type: 'info',
       title: 'SnapDrop Desk',
-      message: ru ? 'Значку SDD не хватило места в верхней панели' : 'The SDD icon does not fit in the menu bar',
+      message: ru ? 'Значку SnapDrop не хватило места в верхней панели' : 'The SnapDrop icon does not fit in the menu bar',
       detail: ru
-        ? 'macOS прячет значки, которые не помещаются справа от выреза камеры. Пока что SnapDrop Desk есть в Доке: клик открывает окно, правый клик — меню и «Quit».\n\nЧтобы вернуть SDD наверх: зажми ⌘ и перетащи пару ненужных значков вниз из панели (или закрой их приложения), затем перезапусти SnapDrop Desk.'
-        : 'macOS hides menu-bar icons that don’t fit to the right of the camera notch. For now SnapDrop Desk is in the Dock: click opens the window, right-click shows the menu and Quit.\n\nTo get SDD back: hold ⌘ and drag a few icons you don’t need out of the menu bar (or quit their apps), then restart SnapDrop Desk.',
+        ? 'macOS прячет значки, которые не помещаются справа от выреза камеры. Пока что SnapDrop Desk есть в Доке: клик открывает окно, правый клик — меню и «Quit».\n\nЧтобы вернуть значок наверх: зажми ⌘ и перетащи пару ненужных значков вниз из панели (или закрой их приложения), затем перезапусти SnapDrop Desk.'
+        : 'macOS hides menu-bar icons that don’t fit to the right of the camera notch. For now SnapDrop Desk is in the Dock: click opens the window, right-click shows the menu and Quit.\n\nTo get the icon back: hold ⌘ and drag a few icons you don’t need out of the menu bar (or quit their apps), then restart SnapDrop Desk.',
       buttons: ['OK'],
       noLink: true,
     }).then(() => showWindow('cursor'));
@@ -466,7 +468,7 @@ if (!app.requestSingleInstanceLock()) {
         break;
       case 'sendTo': value ? integration.install() : integration.uninstall(); break;
       case 'menuBarTitle':
-        settings.set('menuBarTitle', String(value).trim().slice(0, 12));
+        settings.set('menuBarLabel', String(value).trim().slice(0, 12));
         setTrayTitle();
         break;
       case 'theme':

@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('snap', {
   openDownloads: () => ipcRenderer.invoke('open-downloads'),
   clearPending: () => ipcRenderer.invoke('clear-pending'),
   hide: () => ipcRenderer.invoke('hide'),
+  quit: () => ipcRenderer.invoke('quit'),
   setPinned: (v) => ipcRenderer.invoke('pin', v),
   // Electron 32+ removed File.path; this is the supported way to get a dropped file's path.
   pathFor: (file) => webUtils.getPathForFile(file),

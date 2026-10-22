@@ -8,7 +8,7 @@ const path = require('path');
 const fs = require('fs');
 const {
   app, BrowserWindow, Tray, Menu, nativeImage, globalShortcut, ipcMain,
-  clipboard, Notification, dialog, shell, screen,
+  clipboard, Notification, dialog, shell, screen, nativeTheme,
 } = require('electron');
 const QRCode = require('qrcode');
 const { SnapNode } = require('../core/node');
@@ -35,6 +35,7 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(async () => {
     settings = new Settings(app.getPath('userData'), app.getPath('downloads'));
     applyDock();
+    nativeTheme.themeSource = settings.get('theme');
 
     node = new SnapNode({
       id: settings.get('id'),
@@ -46,6 +47,7 @@ if (!app.requestSingleInstanceLock()) {
       approve: askToAccept,
       acceptClipboard: () => settings.get('clipboardSync'),
     });
+    node.setAppearance({ theme: settings.get('theme'), accent: settings.get('accent') });
     await node.start();
     wireNode();
 
@@ -137,6 +139,29 @@ if (!app.requestSingleInstanceLock()) {
       send('toast', `Received ${name} from ${from.name}`);
     });
 
+    let saveErrorShown = 0;
+    node.on('save-error', async ({ dir, code }) => {
+      if (Date.now() - saveErrorShown < 60000) return; // one dialog per burst
+      saveErrorShown = Date.now();
+      const perm = code === 'EACCES' || code === 'EPERM';
+      const { response } = await dialog.showMessageBox({
+        type: 'warning',
+        title: 'SnapDrop Desk',
+        message: perm ? 'SnapDrop Desk is not allowed to save files here' : 'Could not save the received file',
+        detail: perm && isMac
+          ? `${dir}\n\nAllow access in System Settings → Privacy & Security → Files and Folders → SnapDrop Desk, or choose another folder.`
+          : `${dir}\n(${code}) Choose another folder for received files.`,
+        buttons: [perm && isMac ? 'Open System Settings' : 'OK', 'Choose another folder', 'Cancel'],
+        cancelId: 2,
+        noLink: true,
+      });
+      if (response === 0 && perm && isMac) shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders');
+      if (response === 1) {
+        const r = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });
+        if (!r.canceled) { settings.set('downloadDir', r.filePaths[0]); node.downloadDir = r.filePaths[0]; sendState(); }
+      }
+    });
+
     node.on('text-received', ({ text, kind, from }) => {
       if (kind === 'clipboard') {
         clipSync.applyRemote(text);
@@ -185,7 +210,7 @@ if (!app.requestSingleInstanceLock()) {
       fullscreenable: false,
       transparent: isMac,
       vibrancy: isMac ? 'popover' : undefined,
-      backgroundColor: isMac ? '#00000000' : '#f4f1ea',
+      backgroundColor: isMac ? '#00000000' : (nativeTheme.shouldUseDarkColors ? '#12110f' : '#f4f1ea'),
       webPreferences: { preload: path.join(__dirname, 'preload.js'), sandbox: true, contextIsolation: true },
     });
     win.loadFile(path.join(__dirname, '..', 'renderer', 'drop.html'));
@@ -212,6 +237,7 @@ if (!app.requestSingleInstanceLock()) {
       y = Math.min(Math.max(c.y - 60, wa.y + 6), wa.y + wa.height - h - 6);
     }
     win.setPosition(Math.round(x), Math.round(y));
+    if (isMac) app.focus({ steal: true }); // menu-bar apps are never "active" on their own
     win.show();
     win.focus();
     sendState();
@@ -243,12 +269,14 @@ if (!app.requestSingleInstanceLock()) {
         sendTo: integration.isInstalled(),
         launchAtLogin: app.getLoginItemSettings().openAtLogin,
         menuBarTitle: settings.get('menuBarTitle'),
+        theme: settings.get('theme'),
+        accent: settings.get('accent'),
         showInDock: settings.get('showInDock'),
       },
       platform: process.platform,
     };
   }
-  const sendState = async () => send('state', await stateSnapshot());
+  const sendState = async () => { refreshTray(); send('state', await stateSnapshot()); };
 
   function queueFiles(files) {
     files = files.filter((f) => { try { return fs.statSync(f).isFile(); } catch { return false; } });
@@ -260,24 +288,33 @@ if (!app.requestSingleInstanceLock()) {
 
   /* ---------------------------------------------------------------- tray */
   function createTray() {
-    const img = nativeImage.createFromPath(path.join(ASSETS, isMac ? 'trayTemplate.png' : 'tray.png'));
+    let img = nativeImage.createFromPath(path.join(ASSETS, isMac ? 'trayTemplate.png' : 'tray.png'));
+    if (img.isEmpty()) img = nativeImage.createEmpty(); // the “SDD” title alone still shows on macOS
     if (isMac) img.setTemplateImage(true);
     tray = new Tray(img);
     tray.setToolTip('SnapDrop Desk');
     setTrayTitle();
-    tray.on('click', () => toggleWindow('tray'));
-    tray.on('right-click', () => tray.popUpContextMenu(buildMenu()));
     tray.on('drop-files', (_e, files) => queueFiles(files)); // macOS: drop straight onto the menu-bar icon
-    if (!isMac) tray.setContextMenu(buildMenu());
-    const refresh = () => { if (!isMac) tray.setContextMenu(buildMenu()); };
-    node.on('peer-up', refresh);
-    node.on('peer-down', refresh);
+    if (!isMac) tray.on('click', () => toggleWindow('tray')); // Windows / Linux: click opens the window
+    // macOS: like most menu-bar apps (AmneziaVPN etc.) a click on “SDD” opens this menu.
+    // Windows / Linux: the same menu on right-click.
+    tray.setContextMenu(buildMenu());
+    node.on('peer-up', refreshTray);
+    node.on('peer-down', refreshTray);
+  }
+
+  function refreshTray() {
+    if (tray && !tray.isDestroyed()) tray.setContextMenu(buildMenu());
   }
 
   function buildMenu() {
     const peers = node.listPeers();
     return Menu.buildFromTemplate([
-      { label: `Open drop window   ${accelLabel(settings.get('hotkey'))}`, click: () => showWindow('tray') },
+      {
+        label: 'Open SnapDrop Desk', accelerator: settings.get('hotkey'), registerAccelerator: false,
+        click: () => showWindow('tray'),
+      },
+      { label: 'Send files…', click: pickAndQueueFiles },
       { type: 'separator' },
       { label: peers.length ? 'Nearby devices' : 'No devices found yet', enabled: false },
       ...peers.map((p) => ({ label: `   ${p.name}${p.trusted ? '  ✓' : ''}`, enabled: false })),
@@ -299,7 +336,8 @@ if (!app.requestSingleInstanceLock()) {
         click: (i) => app.setLoginItemSettings({ openAtLogin: i.checked, openAsHidden: true }),
       },
       { type: 'separator' },
-      { label: 'Quit SnapDrop Desk', role: 'quit' },
+      { label: 'Settings…', click: () => { showWindow('tray'); send('toast', 'settings'); } },
+      { label: 'Quit SnapDrop Desk', accelerator: 'CommandOrControl+Q', registerAccelerator: false, click: () => app.quit() },
     ]);
   }
 
@@ -316,6 +354,11 @@ if (!app.requestSingleInstanceLock()) {
     if (!isMac) return;
     if (settings.get('showInDock')) app.dock.show();
     else app.dock.hide();
+  }
+
+  async function pickAndQueueFiles() {
+    const r = await dialog.showOpenDialog({ title: 'Send with SnapDrop', properties: ['openFile', 'multiSelections'] });
+    if (!r.canceled) queueFiles(r.filePaths);
   }
 
   function setClipboardSync(on) {
@@ -377,6 +420,17 @@ if (!app.requestSingleInstanceLock()) {
         settings.set('menuBarTitle', String(value).trim().slice(0, 12));
         setTrayTitle();
         break;
+      case 'theme':
+        if (!['system', 'light', 'dark'].includes(value)) return { ok: false, error: 'unknown theme' };
+        settings.set('theme', value);
+        nativeTheme.themeSource = value;
+        node.setAppearance({ theme: value });
+        break;
+      case 'accent':
+        if (!/^#[0-9a-f]{6}$/i.test(String(value))) return { ok: false, error: 'bad colour' };
+        settings.set('accent', value);
+        node.setAppearance({ accent: value });
+        break;
       case 'showInDock':
         settings.set('showInDock', !!value);
         applyDock();
@@ -400,6 +454,7 @@ if (!app.requestSingleInstanceLock()) {
   ipcMain.handle('open-downloads', () => shell.openPath(settings.get('downloadDir')));
   ipcMain.handle('clear-pending', () => { pending = []; send('pending', pending); });
   ipcMain.handle('hide', () => win.hide());
+  ipcMain.handle('quit', () => app.quit());
   ipcMain.handle('pin', (_e, v) => { pinned = !!v; });
 
   /* ---------------------------------------------------------------- helpers */
@@ -414,12 +469,6 @@ if (!app.requestSingleInstanceLock()) {
     // Packaged: [exe, ...files]; dev: [electron, ., ...files]. Also accept "--send <file>".
     return argv.slice(app.isPackaged ? 1 : 2).filter((a) => !a.startsWith('-') && a !== '.' && path.isAbsolute(a) && fs.existsSync(a));
   }
-}
-
-function accelLabel(a) {
-  return process.platform === 'darwin'
-    ? a.replace('CommandOrControl', '⌘').replace('Shift', '⇧').replace('Alt', '⌥').replace(/\+/g, '')
-    : a.replace('CommandOrControl', 'Ctrl');
 }
 
 function formatSize(n = 0) {

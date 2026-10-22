@@ -133,6 +133,21 @@ class SnapNode extends EventEmitter {
     return `http://${host}:${this.port}/?t=${this.webToken}`;
   }
 
+  appearance() {
+    return { theme: this.theme || 'system', accent: this.accent || '#ff5a1f' };
+  }
+
+  /** Theme / accent picked on the computer; connected phones restyle live. */
+  setAppearance({ theme, accent } = {}) {
+    if (theme) this.theme = theme;
+    if (accent) this.accent = accent;
+    const msg = JSON.stringify({ type: 'appearance', ...this.appearance() });
+    for (const p of this.peers.values()) {
+      if (p.kind !== 'web') continue;
+      for (const ws of p.sockets) if (ws.readyState === 1) ws.send(msg);
+    }
+  }
+
   resetWebToken() {
     this.webToken = randomId(12);
     for (const p of [...this.peers.values()]) {
@@ -323,9 +338,11 @@ class SnapNode extends EventEmitter {
     const token = req.headers['x-snap-token'] || url.searchParams.get('t');
     if (token) {
       if (!safeEqual(token, this.webToken)) return this._json(res, 401, { error: 'bad token' }), null;
-      const wid = req.headers['x-snap-web-id'];
-      const peer = (wid && this.peers.get(wid)) || { id: 'web', name: 'Phone', platform: 'web', kind: 'web' };
-      return { peer };
+      // Phones send their stable client id with every request, so a send that races a
+      // reconnect (iOS drops the socket while the photo picker is open) still works.
+      const cid = String(req.headers['x-snap-cid'] || req.headers['x-snap-web-id'] || '').replace(/^web-/, '');
+      const name = safeDecode(req.headers['x-snap-name']).slice(0, 40) || undefined; // keep the known name
+      return { peer: this._webPeer(cid, { name }) };
     }
 
     // Another desktop
@@ -384,7 +401,11 @@ class SnapNode extends EventEmitter {
       fs.renameSync(partial, target);
     } catch (err) {
       fs.rmSync(partial, { force: true });
-      if (!res.headersSent) this._json(res, 400, { error: 'upload interrupted' });
+      if (['EACCES', 'EPERM', 'ENOSPC', 'EROFS', 'ENOENT'].includes(err.code)) {
+        // Disk problem on this computer (no permission for Downloads, disk full…), not the network.
+        this.emit('save-error', { dir: this.downloadDir, code: err.code, name });
+        if (!res.headersSent) this._json(res, 507, { error: 'save-failed', code: err.code });
+      } else if (!res.headersSent) this._json(res, 400, { error: 'upload interrupted' });
       return;
     }
     const out = { path: target, name: path.basename(target), size: got, from: this.publicPeer(auth.peer) };
@@ -452,26 +473,24 @@ class SnapNode extends EventEmitter {
       return socket.destroy();
     }
     this.wss.handleUpgrade(req, socket, head, (ws) => {
-      const wid = 'web-' + (url.searchParams.get('cid') || randomId(4)).replace(/[^a-z0-9]/gi, '').slice(0, 16);
       const name = (url.searchParams.get('name') || 'Phone').slice(0, 40);
       const ua = req.headers['user-agent'] || '';
       const platform = /iphone|ipad|ios/i.test(ua) ? 'ios' : /android/i.test(ua) ? 'android' : 'web';
       const sameEpoch = url.searchParams.get('epoch') === this.epoch;
       const since = sameEpoch ? Number(url.searchParams.get('since')) || 0 : 0;
 
-      let peer = this.peers.get(wid);
-      const wasOnline = !!peer?.sockets.size;
-      if (!peer) {
-        peer = { id: wid, kind: 'web', sockets: new Set(), outbox: [], seq: 0, acked: 0, waiters: new Map() };
-        this.peers.set(wid, peer);
-      }
-      Object.assign(peer, { name, platform, host: (req.socket.remoteAddress || '').replace(/^::ffff:/, ''), lastSeen: Date.now() });
+      const known = this.peers.get(this._webId(url.searchParams.get('cid')));
+      const wasListed = !!known;
+      const wasOnline = !!known?.sockets.size;
+      const peer = this._webPeer(url.searchParams.get('cid') || randomId(4), { name, quiet: true });
+      const wid = peer.id;
+      Object.assign(peer, { platform, host: (req.socket.remoteAddress || '').replace(/^::ffff:/, ''), lastSeen: Date.now() });
       peer.acked = Math.max(peer.acked, since);
       peer.sockets.add(ws); // several tabs / overlapping reconnects are fine — all get messages
       this._settleAcks(peer);
-      this.emit(wasOnline ? 'peer-update' : 'peer-up', this.publicPeer(peer));
+      this.emit(wasListed || wasOnline ? 'peer-update' : 'peer-up', this.publicPeer(peer));
 
-      ws.send(JSON.stringify({ type: 'hello', id: wid, epoch: this.epoch, device: this.info() }));
+      ws.send(JSON.stringify({ type: 'hello', id: wid, epoch: this.epoch, device: this.info(), appearance: this.appearance() }));
       for (const m of peer.outbox) if (m.seq > since) ws.send(JSON.stringify(m));
 
       ws.isAlive = true;
@@ -502,6 +521,23 @@ class SnapNode extends EventEmitter {
       });
       ws.on('error', () => {});
     });
+  }
+
+  _webId(cid) {
+    return 'web-' + String(cid || '').replace(/[^a-z0-9]/gi, '').slice(0, 16);
+  }
+
+  /** Find or create the record for a phone (it may currently be offline). */
+  _webPeer(cid, { name, quiet = false } = {}) {
+    const id = this._webId(cid || 'anon');
+    let peer = this.peers.get(id);
+    if (!peer) {
+      peer = { id, kind: 'web', name: name || 'Phone', platform: 'web', sockets: new Set(), outbox: [], seq: 0, acked: 0, waiters: new Map(), lastSeen: Date.now() };
+      this.peers.set(id, peer);
+      if (!quiet) this.emit('peer-up', this.publicPeer(peer));
+    }
+    if (name) peer.name = name;
+    return peer;
   }
 
   /** Queue a message for a phone and resolve true once the phone confirms it, false if it is asleep. */

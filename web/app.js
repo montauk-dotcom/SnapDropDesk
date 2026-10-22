@@ -43,6 +43,10 @@
   const fmt = (n) => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(0)} KB` : n < 1073741824 ? `${(n / 1048576).toFixed(1)} MB` : `${(n / 1073741824).toFixed(2)} GB`;
   const setStatus = (on, text) => { $('dot').className = 'dot ' + (on ? 'on' : 'off'); $('statusText').textContent = text; };
 
+  // Same look as the computer (theme + colour chosen in its settings); cached to avoid a flash.
+  try { window.applyAppearance(JSON.parse(store.get('snap.look') || '{}')); } catch { /* none yet */ }
+  const setLook = (look) => { if (!look) return; window.applyAppearance(look); store.set('snap.look', JSON.stringify(look)); };
+
   if (!token) { $('gate').hidden = false; setStatus(false, 'not paired'); return; }
   $('app').hidden = false;
 
@@ -67,10 +71,13 @@
       try { msg = JSON.parse(e.data); } catch { return; }
       if (msg.type === 'hello') {
         webId = msg.id;
+        setLook(msg.appearance);
         if (msg.epoch !== epoch) { epoch = msg.epoch; lastSeq = 0; store.set('snap.epoch', epoch); store.set('snap.seq', '0'); }
         $('targetName').textContent = msg.device.name;
         $('targetIcon').textContent = { mac: '💻', windows: '🖥️', linux: '🐧' }[msg.device.platform] || '💻';
         setStatus(true, 'connected');
+      } else if (msg.type === 'appearance') {
+        setLook(msg);
       } else if (msg.type === 'file' || msg.type === 'text') {
         receive(msg);
       }
@@ -196,30 +203,59 @@
   }
 
   /* ---------------- sending ---------------- */
-  function upload(file) {
+  const reason = (status, body) => {
+    let msg = '';
+    try { msg = JSON.parse(body || '{}').error || ''; } catch { /* not json */ }
+    if (status === 401) return 'Link expired — scan the QR code again';
+    if (status === 0) return 'No connection to the computer — same Wi‑Fi?';
+    if (msg === 'save-failed') return 'The computer could not save the file — check its notification';
+    return `Failed (${status}${msg ? ': ' + msg : ''})`;
+  };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  function uploadOnce(file) {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open('POST', '/api/upload');
       xhr.setRequestHeader('x-snap-token', token);
-      if (webId) xhr.setRequestHeader('x-snap-web-id', webId);
+      xhr.setRequestHeader('x-snap-cid', cid);
+      xhr.setRequestHeader('x-snap-name', encodeURIComponent(myName));
       xhr.setRequestHeader('x-snap-filename', encodeURIComponent(file.name || 'file'));
       xhr.upload.onprogress = (e) => { if (e.lengthComputable) $('bar').firstElementChild.style.width = `${(e.loaded / e.total) * 100}%`; };
-      xhr.onload = () => (xhr.status === 200 ? resolve() : reject(new Error(xhr.status === 401 ? 'Link expired — rescan QR' : `Failed (${xhr.status})`)));
-      xhr.onerror = () => reject(new Error('Connection lost'));
+      xhr.onload = () => {
+        if (xhr.status === 200) return resolve();
+        const err = new Error(reason(xhr.status, xhr.responseText));
+        err.retry = xhr.status >= 500 && xhr.status !== 507;
+        reject(err);
+      };
+      xhr.onerror = () => { const err = new Error(reason(0)); err.retry = true; reject(err); };
       xhr.send(file);
     });
+  }
+
+  // Coming back from the iOS photo picker the network can need a moment — retry briefly.
+  async function upload(file) {
+    for (let attempt = 0; ; attempt++) {
+      try { return await uploadOnce(file); }
+      catch (e) {
+        if (!e.retry || attempt >= 2) throw e;
+        await sleep(700 * (attempt + 1));
+      }
+    }
   }
 
   async function sendFiles(files) {
     if (!files.length) return;
     $('bar').hidden = false;
     let ok = 0;
+    let failed = null;
     for (const f of files) {
       $('bar').firstElementChild.style.width = '0';
-      try { await upload(f); ok++; } catch (e) { toast(e.message); break; }
+      try { await upload(f); ok++; } catch (e) { failed = e.message; break; }
     }
     $('bar').hidden = true;
-    if (ok) toast(ok === 1 ? `Sent ${files[0].name}` : `Sent ${ok} files`);
+    if (failed) toast(ok ? `Sent ${ok} of ${files.length}. ${failed}` : failed);
+    else if (ok) toast(ok === 1 ? `Sent ${files[0].name}` : `Sent ${ok} files`);
   }
 
   $('fileInput').addEventListener('change', (e) => { sendFiles([...e.target.files]); e.target.value = ''; });
@@ -231,13 +267,23 @@
   $('sendText').onclick = async () => {
     const text = $('text').value;
     if (!text.trim()) return;
-    const r = await fetch('/api/text', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-snap-token': token, ...(webId ? { 'x-snap-web-id': webId } : {}) },
-      body: JSON.stringify({ text, kind: 'message' }),
-    }).catch(() => null);
-    if (r && r.ok) { $('text').value = ''; toast('Sent — it’s on the computer’s clipboard'); }
-    else toast('Could not send');
+    $('sendText').disabled = true;
+    let last = 'No connection to the computer — same Wi‑Fi?';
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const r = await fetch('/api/text', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-snap-token': token, 'x-snap-cid': cid, 'x-snap-name': encodeURIComponent(myName) },
+          body: JSON.stringify({ text, kind: 'message' }),
+        });
+        if (r.ok) { $('text').value = ''; toast('Sent — it’s on the computer’s clipboard'); last = null; break; }
+        last = reason(r.status, await r.text());
+        if (r.status < 500) break;
+      } catch { /* network blip */ }
+      await sleep(700 * (attempt + 1));
+    }
+    $('sendText').disabled = false;
+    if (last) toast(last);
   };
 
   $('pasteBtn').onclick = async () => {

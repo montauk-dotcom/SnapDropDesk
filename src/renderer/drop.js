@@ -42,6 +42,16 @@ function render() {
   $('sLogin').checked = s.launchAtLogin;
   if (document.activeElement !== $('sTitle')) $('sTitle').value = s.menuBarTitle || '';
   $('sDock').checked = !!s.showInDock;
+  window.applyAppearance({ theme: s.theme, accent: s.accent });
+  document.querySelectorAll('#sTheme button').forEach((b) => b.classList.toggle('on', b.dataset.v === (s.theme || 'system')));
+  let preset = false;
+  document.querySelectorAll('#sAccent button').forEach((b) => {
+    const on = b.dataset.v.toLowerCase() === (s.accent || '').toLowerCase();
+    preset ||= on;
+    b.classList.toggle('on', on);
+  });
+  document.querySelector('#sAccent .custom').classList.toggle('on', !preset);
+  $('sAccentCustom').value = s.accent || '#ff5a1f';
   document.querySelectorAll('.mac-only').forEach((el) => { el.hidden = state.platform !== 'darwin'; });
   $('sDir').textContent = s.downloadDir;
   $('sendToLine').hidden = state.platform === 'darwin';
@@ -157,8 +167,12 @@ document.addEventListener('drop', (e) => {
 
 $('clearPending').onclick = () => api.clearPending();
 $('closeBtn').onclick = () => api.hide();
+$('quitBtn').onclick = () => api.quit();
 $('pinBtn').onclick = () => { pinned = !pinned; $('pinBtn').classList.toggle('on', pinned); api.setPinned(pinned); };
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') api.hide(); });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') api.hide();
+  if (e.key.toLowerCase() === 'q' && (e.metaKey || e.ctrlKey)) api.quit();
+});
 
 function switchView(name) {
   document.querySelectorAll('nav button').forEach((b) => b.classList.toggle('active', b.dataset.view === name));
@@ -179,6 +193,14 @@ saveOnEnter($('sName'), 'name');
 saveOnEnter($('sHotkey'), 'hotkey');
 saveOnEnter($('sTitle'), 'menuBarTitle');
 $('sDock').onchange = (e) => api.setSetting('showInDock', e.target.checked);
+document.querySelectorAll('#sTheme button').forEach((b) => (b.onclick = () => api.setSetting('theme', b.dataset.v)));
+document.querySelectorAll('#sAccent button').forEach((b) => {
+  b.style.setProperty('--c', b.dataset.v);
+  b.onclick = () => api.setSetting('accent', b.dataset.v);
+});
+$('sAccentCustom').oninput = (e) => window.applyAppearance({ accent: e.target.value }); // live preview
+$('sAccentCustom').onchange = (e) => api.setSetting('accent', e.target.value);
+$('quitRow').onclick = () => api.quit();
 $('sClip').onchange = (e) => api.setSetting('clipboardSync', e.target.checked);
 $('sSendTo').onchange = (e) => api.setSetting('sendTo', e.target.checked);
 $('sLogin').onchange = (e) => api.setSetting('launchAtLogin', e.target.checked);
@@ -195,7 +217,7 @@ $('manual').addEventListener('keydown', async (e) => {
 api.on('state', (s) => { state = s; render(); });
 api.on('peers', (peers) => { if (state) { state.peers = peers; render(); } });
 api.on('pending', (pending) => { if (state) { state.pending = pending; renderPending(); switchView('devices'); } });
-api.on('toast', (msg) => (msg === 'qr' ? switchView('phone') : toast(msg)));
+api.on('toast', (msg) => (msg === 'qr' ? switchView('phone') : msg === 'settings' ? switchView('settings') : toast(msg)));
 api.on('progress', (p) => {
   const done = p.sent >= p.total;
   $('progress').classList.toggle('show', !done);

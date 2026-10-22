@@ -14,16 +14,24 @@
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI Variable", "Segoe UI", Inter, Roboto, sans-serif;
   color-scheme: light;
 }
+/* Dark palette: follows the system unless the user picked a theme (data-theme on <html>). */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #12110f;
     --surface: #1c1b18;
     --ink: #f2efe8;
     --muted: #9d978b;
     --line: #2e2c27;
-    --accent: #ff6b35;
     color-scheme: dark;
   }
+}
+:root[data-theme="dark"] {
+  --bg: #12110f;
+  --surface: #1c1b18;
+  --ink: #f2efe8;
+  --muted: #9d978b;
+  --line: #2e2c27;
+  color-scheme: dark;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 var(--sans); -webkit-font-smoothing: antialiased; }

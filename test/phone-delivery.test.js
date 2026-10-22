@@ -149,3 +149,38 @@ test('files to a sleeping phone are queued too and the link still works later', 
   assert.equal(await dl.text(), 'pdf');
   back.close();
 });
+
+test('phone can send while its socket is reconnecting (iOS photo picker case)', async () => {
+  for (const [url, body] of [['/api/upload', 'photo'], ['/api/text', JSON.stringify({ text: 'hi' })]]) {
+    const r = await fetch(`http://127.0.0.1:${node.port}${url}`, {
+      method: 'POST', body,
+      headers: { 'x-snap-token': node.webToken, 'x-snap-cid': 'picker1', 'x-snap-name': 'iPhone', 'x-snap-filename': 'IMG_1.JPG' },
+    });
+    assert.equal(r.status, 200, url);
+  }
+  const listed = node.listPeers().find((p) => p.id === 'web-picker1');
+  assert.ok(listed, 'phone shows up even before its socket reconnects');
+  assert.equal(listed.name, 'iPhone');
+});
+
+test('request with no phone id at all still works', async () => {
+  const r = await fetch(`http://127.0.0.1:${node.port}/api/text`, {
+    method: 'POST', body: JSON.stringify({ text: 'old client' }), headers: { 'x-snap-token': node.webToken },
+  });
+  assert.equal(r.status, 200);
+});
+
+test('a save failure on the computer is reported as such, not as a network error', async () => {
+  const bad = new SnapNode({ id: 'desk0002', name: 'Mac', downloadDir: path.join(tmp, 'dl2'), port: 0 });
+  await bad.start();
+  bad.downloadDir = path.join(tmp, 'missing', 'nested'); // like a folder the app may not write to
+  let reported = null;
+  bad.on('save-error', (e) => { reported = e; });
+  const r = await fetch(`http://127.0.0.1:${bad.port}/api/upload`, {
+    method: 'POST', body: 'x', headers: { 'x-snap-token': bad.webToken, 'x-snap-cid': 'c', 'x-snap-filename': 'a.jpg' },
+  });
+  assert.equal(r.status, 507);
+  assert.equal((await r.json()).error, 'save-failed');
+  assert.equal(reported.code, 'ENOENT');
+  await bad.stop();
+});

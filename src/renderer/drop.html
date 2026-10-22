@@ -62,6 +62,14 @@
     .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: 0.15s; box-shadow: 0 1px 2px rgba(0,0,0,.2); }
     .switch:checked { background: var(--accent); }
     .switch:checked::after { left: 16px; }
+    .seg { display: flex; background: var(--line); border-radius: 9px; padding: 2px; }
+    .seg button { border: 0; background: none; padding: 5px 10px; border-radius: 7px; font-size: 12px; font-weight: 600; color: var(--muted); }
+    .seg button.on { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.15); }
+    .swatches { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; max-width: 230px; }
+    .swatches button, .swatches .custom { width: 20px; height: 20px; border-radius: 50%; border: 0; padding: 0; background: var(--c); cursor: pointer; position: relative; }
+    .swatches button.on, .swatches .custom.on { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--ink); }
+    .swatches .custom { background: conic-gradient(#f43, #fd2, #3c6, #29f, #a4f, #f43); overflow: hidden; }
+    .swatches .custom input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
     .link { background: none; border: 0; color: var(--accent); font-size: 12px; padding: 0; }
   </style>
 </head>
@@ -74,7 +82,8 @@
       </div>
       <div>
         <button id="pinBtn" title="Keep window open">📌</button>
-        <button id="closeBtn" title="Hide (Esc)">✕</button>
+        <button id="quitBtn" title="Quit SnapDrop Desk (⌘Q / Ctrl+Q)">⏻</button>
+        <button id="closeBtn" title="Hide (Esc) — keeps running in the menu bar">✕</button>
       </div>
     </header>
 
@@ -113,6 +122,18 @@
 
     <section class="view" id="v-settings">
       <div class="set">
+        <div class="line"><span>Theme</span>
+          <div class="seg" id="sTheme"><button data-v="system">Auto</button><button data-v="light">Light</button><button data-v="dark">Dark</button></div>
+        </div>
+        <div class="line"><span>Colour<small>Also used on connected phones</small></span>
+          <div class="swatches" id="sAccent">
+            <button data-v="#ff5a1f" title="Orange"></button><button data-v="#2f6bff" title="Blue"></button>
+            <button data-v="#1f9d55" title="Green"></button><button data-v="#7c4dff" title="Violet"></button>
+            <button data-v="#e5397a" title="Pink"></button><button data-v="#0f9b9b" title="Teal"></button>
+            <button data-v="#f2b705" title="Yellow"></button>
+            <label class="custom" title="Any colour"><input type="color" id="sAccentCustom"></label>
+          </div>
+        </div>
         <div class="line"><span>Device name</span><input type="text" id="sName" maxlength="40"></div>
         <div class="line"><span>Hotkey<small>e.g. CommandOrControl+Shift+Space</small></span><input type="text" id="sHotkey"></div>
         <div class="line"><span>Sync clipboard<small>Text only, with paired computers</small></span><input type="checkbox" class="switch" id="sClip"></div>
@@ -125,6 +146,7 @@
         <div style="padding-top:12px" class="label">Paired devices</div>
         <div id="paired" style="font-size:13px"></div>
         <div style="padding-top:12px" class="me" id="addr"></div>
+        <button class="btn ghost" id="quitRow" style="margin-top:14px;width:100%">Quit SnapDrop Desk</button>
       </div>
     </section>
 
@@ -140,6 +162,7 @@
     </nav>
   </div>
   <div class="toast" id="toast"></div>
+  <script src="../../web/appearance.js"></script>
   <script src="drop.js"></script>
 </body>
 </html>

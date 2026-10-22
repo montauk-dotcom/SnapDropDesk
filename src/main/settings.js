@@ -13,6 +13,8 @@ const DEFAULTS = {
   copyIncomingText: true,
   menuBarTitle: 'SDD', // text next to the menu-bar icon on macOS ('' = icon only)
   showInDock: false,
+  theme: 'system',     // system | light | dark
+  accent: '#ff5a1f',
 };
 
 class Settings {

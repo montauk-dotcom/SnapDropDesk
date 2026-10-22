@@ -11,6 +11,8 @@ const DEFAULTS = {
   clipboardSync: false,
   notifications: true,
   copyIncomingText: true,
+  menuBarTitle: 'SDD', // text next to the menu-bar icon on macOS ('' = icon only)
+  showInDock: false,
 };
 
 class Settings {

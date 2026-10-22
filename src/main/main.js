@@ -33,8 +33,8 @@ if (!app.requestSingleInstanceLock()) {
 
   /* ---------------------------------------------------------------- boot */
   app.whenReady().then(async () => {
-    if (isMac) app.dock.hide();
     settings = new Settings(app.getPath('userData'), app.getPath('downloads'));
+    applyDock();
 
     node = new SnapNode({
       id: settings.get('id'),
@@ -67,6 +67,15 @@ if (!app.requestSingleInstanceLock()) {
     registerHotkey();
     queueFiles(filesFromArgv(process.argv));
 
+    // First launch: there is no Dock icon, so open the window once to show where the app lives.
+    if (!settings.get('welcomed') && !process.env.SNAPDROP_SMOKE) {
+      settings.set('welcomed', true);
+      win.webContents.once('did-finish-load', () => {
+        showWindow('tray');
+        send('toast', isMac ? 'SnapDrop Desk lives in the menu bar — look for “SDD”' : 'SnapDrop Desk lives in the tray');
+      });
+    }
+
     // CI smoke test: `SNAPDROP_SMOKE=out.png electron .` boots, screenshots the window, quits.
     if (process.env.SNAPDROP_SMOKE) {
       win.webContents.once('did-finish-load', () => {
@@ -81,6 +90,9 @@ if (!app.requestSingleInstanceLock()) {
       });
     }
   });
+
+  // macOS: opening the app again from Finder / Launchpad / Spotlight while it runs → show it.
+  app.on('activate', () => { if (win) showWindow('tray'); });
 
   app.on('second-instance', (_e, argv) => {
     const files = filesFromArgv(argv);
@@ -115,7 +127,9 @@ if (!app.requestSingleInstanceLock()) {
       if (p.sent !== p.total && now - lastProgress < 80) return;
       lastProgress = now;
       send('progress', p);
-      win?.setProgressBar(p.sent === p.total ? -1 : p.sent / (p.total || 1));
+      const done = p.sent >= p.total;
+      win?.setProgressBar(done ? -1 : p.sent / (p.total || 1));
+      setTrayTitle(done ? null : `${Math.round((p.sent / (p.total || 1)) * 100)}%`);
     });
 
     node.on('file-received', ({ path: file, name, from }) => {
@@ -228,6 +242,8 @@ if (!app.requestSingleInstanceLock()) {
         downloadDir: settings.get('downloadDir'),
         sendTo: integration.isInstalled(),
         launchAtLogin: app.getLoginItemSettings().openAtLogin,
+        menuBarTitle: settings.get('menuBarTitle'),
+        showInDock: settings.get('showInDock'),
       },
       platform: process.platform,
     };
@@ -248,6 +264,7 @@ if (!app.requestSingleInstanceLock()) {
     if (isMac) img.setTemplateImage(true);
     tray = new Tray(img);
     tray.setToolTip('SnapDrop Desk');
+    setTrayTitle();
     tray.on('click', () => toggleWindow('tray'));
     tray.on('right-click', () => tray.popUpContextMenu(buildMenu()));
     tray.on('drop-files', (_e, files) => queueFiles(files)); // macOS: drop straight onto the menu-bar icon
@@ -271,6 +288,10 @@ if (!app.requestSingleInstanceLock()) {
       },
       { label: 'Connect phone (QR code)…', click: () => { showWindow('tray'); send('toast', 'qr'); } },
       { label: 'Open received files', click: () => shell.openPath(settings.get('downloadDir')) },
+      ...(isMac ? [{
+        label: 'Show in Dock', type: 'checkbox', checked: settings.get('showInDock'),
+        click: (i) => { settings.set('showInDock', i.checked); applyDock(); sendState(); },
+      }] : []),
       { type: 'separator' },
       ...integration.menuItems(() => sendState()),
       {
@@ -280,6 +301,21 @@ if (!app.requestSingleInstanceLock()) {
       { type: 'separator' },
       { label: 'Quit SnapDrop Desk', role: 'quit' },
     ]);
+  }
+
+  /** macOS menu bar: “SDD” next to the icon (or transfer progress while sending). */
+  function setTrayTitle(extra = null) {
+    if (!isMac || !tray) return;
+    const label = settings.get('menuBarTitle') || '';
+    const text = [label, extra].filter(Boolean).join(' ');
+    tray.setTitle(text ? ` ${text}` : '', { fontType: 'monospacedDigit' });
+  }
+
+  /** macOS: Dock icon is optional (useful when a crowded menu bar / notch hides the icon). */
+  function applyDock() {
+    if (!isMac) return;
+    if (settings.get('showInDock')) app.dock.show();
+    else app.dock.hide();
   }
 
   function setClipboardSync(on) {
@@ -337,6 +373,14 @@ if (!app.requestSingleInstanceLock()) {
         settings.set('hotkey', value);
         break;
       case 'sendTo': value ? integration.install() : integration.uninstall(); break;
+      case 'menuBarTitle':
+        settings.set('menuBarTitle', String(value).trim().slice(0, 12));
+        setTrayTitle();
+        break;
+      case 'showInDock':
+        settings.set('showInDock', !!value);
+        applyDock();
+        break;
       case 'launchAtLogin': app.setLoginItemSettings({ openAtLogin: !!value, openAsHidden: true }); break;
       case 'downloadDir': {
         const r = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'], defaultPath: settings.get('downloadDir') });

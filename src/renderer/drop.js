@@ -40,6 +40,9 @@ function render() {
   $('sClip').checked = s.clipboardSync;
   $('sSendTo').checked = s.sendTo;
   $('sLogin').checked = s.launchAtLogin;
+  if (document.activeElement !== $('sTitle')) $('sTitle').value = s.menuBarTitle || '';
+  $('sDock').checked = !!s.showInDock;
+  document.querySelectorAll('.mac-only').forEach((el) => { el.hidden = state.platform !== 'darwin'; });
   $('sDir').textContent = s.downloadDir;
   $('sendToLine').hidden = state.platform === 'darwin';
   $('sendToLabel').textContent = state.platform === 'win32' ? 'Explorer “Send to” menu' : '“Open With” menu';
@@ -174,6 +177,8 @@ const saveOnEnter = (el, key) => {
 };
 saveOnEnter($('sName'), 'name');
 saveOnEnter($('sHotkey'), 'hotkey');
+saveOnEnter($('sTitle'), 'menuBarTitle');
+$('sDock').onchange = (e) => api.setSetting('showInDock', e.target.checked);
 $('sClip').onchange = (e) => api.setSetting('clipboardSync', e.target.checked);
 $('sSendTo').onchange = (e) => api.setSetting('sendTo', e.target.checked);
 $('sLogin').onchange = (e) => api.setSetting('launchAtLogin', e.target.checked);

@@ -23,7 +23,7 @@
     .drop input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
     .text { padding: 14px; display: grid; gap: 10px; }
     .text .row { display: flex; justify-content: space-between; align-items: center; }
-    .list { display: grid; gap: 8px; }
+    .list { display: grid; gap: 8px; max-height: 46vh; overflow-y: auto; overscroll-behavior: contain; border-radius: var(--radius); }
     .item { padding: 12px 14px; display: grid; gap: 8px; }
     .item .top { display: flex; align-items: center; gap: 10px; }
     .item .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
@@ -32,6 +32,8 @@
     .item .btn { padding: 7px 12px; font-size: 13px; }
     .empty { text-align: center; color: var(--muted); font-size: 13px; padding: 8px; }
     .gate { padding: 22px 18px; text-align: center; display: grid; gap: 8px; }
+    .item.fresh { animation: pop 0.9s ease-out; }
+    @keyframes pop { from { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); } }
     [hidden] { display: none !important; }
   </style>
 </head>
@@ -51,8 +53,11 @@
       <div style="display:grid;gap:14px">
         <section class="card target">
           <div class="icon" id="targetIcon">💻</div>
-          <div><span class="label">Sending to</span><b id="targetName">—</b></div>
+          <div><span class="label">Connected to</span><b id="targetName">—</b></div>
         </section>
+
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 2px 0"><span class="label">Received</span><button class="btn ghost" id="clearInbox" style="padding:4px 10px;font-size:12px" hidden>Clear</button></div>
+        <div class="list" id="inbox"><div class="empty" id="empty">Files and text sent from the computer appear here.</div></div>
 
         <label class="drop" id="drop">
           <input type="file" id="fileInput" multiple>
@@ -67,8 +72,7 @@
           <button class="btn accent" id="sendText">Send text</button>
         </section>
 
-        <div class="label" style="padding:4px 2px 0">Received</div>
-        <div class="list" id="inbox"><div class="empty" id="empty">Files and text sent from the computer appear here.</div></div>
+
       </div>
     </div>
   </main>

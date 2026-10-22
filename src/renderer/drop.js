@@ -71,10 +71,12 @@ function renderPeers() {
   }
   for (const p of peers) {
     const t = document.createElement('div');
-    t.className = 'tile' + (p.id === selected ? ' sel' : '');
+    t.className = 'tile' + (p.id === selected ? ' sel' : '') + (p.online === false ? ' offline' : '');
     t.innerHTML = `<div class="ico">${iconFor(p)}</div><div class="nm"></div><div class="sub"></div>${p.trusted ? '<span class="badge">PAIRED</span>' : ''}`;
     t.querySelector('.nm').textContent = p.name;
-    t.querySelector('.sub').textContent = platformName(p);
+    t.querySelector('.sub').textContent = p.online === false
+      ? (p.pending ? `asleep · ${p.pending} waiting` : 'asleep · will get it on open')
+      : platformName(p);
     t.onclick = () => {
       selected = p.id;
       if (state.pending.length) sendFiles(p, state.pending);
@@ -104,16 +106,20 @@ function renderPending() {
 }
 
 /* ---------------------------------------------------------------- actions */
+const queuedNote = (peer) => `${peer.name} is asleep — it will appear as soon as SnapDrop is opened on the phone`;
+
 async function sendFiles(peer, paths) {
   toast(`Sending to ${peer.name}…`);
   const r = await api.sendFiles(peer.id, paths);
-  toast(r.ok ? `Sent ${r.sent} file${r.sent > 1 ? 's' : ''} to ${peer.name}` : r.error);
+  if (!r.ok) return toast(r.error);
+  toast(r.delivered === false ? queuedNote(peer) : `Sent ${r.sent} file${r.sent > 1 ? 's' : ''} to ${peer.name}`);
 }
 
 async function sendText(peer, text) {
   const r = await api.sendText(peer.id, text);
-  toast(r.ok ? `Text sent to ${peer.name}` : r.error);
-  return r.ok;
+  if (!r.ok) { toast(r.error); return false; }
+  toast(r.delivered === false ? queuedNote(peer) : `Delivered to ${peer.name} ✓`);
+  return true;
 }
 
 const selectedPeer = () => state?.peers.find((p) => p.id === selected);

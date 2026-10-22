@@ -28,6 +28,8 @@
     .tile .ico svg { width: 24px; height: 24px; stroke: var(--ink); fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
     .tile .nm { font-weight: 600; font-size: 13px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .tile .sub { font-size: 11px; color: var(--muted); }
+    .tile.offline .ico { opacity: 0.45; }
+    .tile.offline .sub { color: var(--warn); }
     .tile .badge { position: absolute; top: 8px; right: 9px; font-size: 10px; color: var(--ok); font-weight: 700; }
     .empty { grid-column: 1 / -1; padding: 26px 12px; text-align: center; color: var(--muted); font-size: 13px; border: 1.5px dashed var(--line); border-radius: var(--radius); }
     .empty a { color: var(--accent); cursor: pointer; }

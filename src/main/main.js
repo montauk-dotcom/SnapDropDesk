@@ -313,7 +313,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   ipcMain.handle('send-text', async (_e, peerId, text) => {
-    try { await node.sendText(peerId, text, 'message'); return { ok: true }; }
+    try { return { ok: true, ...(await node.sendText(peerId, text, 'message')) }; }
     catch (err) { return { ok: false, error: err.message }; }
   });
 

@@ -20,8 +20,18 @@
   const myName = store.get('snap.name') || (/iPad/.test(ua) ? 'iPad' : /iPhone/.test(ua) ? 'iPhone' : /Android/.test(ua) ? 'Android' : 'Browser');
 
   let webId = null;
-  let ws = null;
+  let ws = null;          // the one live socket; stale sockets are ignored by generation number
+  let gen = 0;
   let retry = 0;
+  let retryTimer = null;
+  let lastHeard = 0;      // any message from the computer, pongs included
+
+  // Delivery state survives reloads: iOS often discards a background tab and reloads it later.
+  let epoch = store.get('snap.epoch') || '';
+  let lastSeq = Number(store.get('snap.seq')) || 0;
+  let inbox = [];
+  try { inbox = JSON.parse(store.get('snap.inbox') || '[]'); } catch { inbox = []; }
+  const INBOX_MAX = 60;
 
   const toast = (msg) => {
     const t = $('toast');
@@ -36,67 +46,143 @@
   if (!token) { $('gate').hidden = false; setStatus(false, 'not paired'); return; }
   $('app').hidden = false;
 
-  function connect() {
+  function wsUrl() {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    ws = new WebSocket(`${proto}://${location.host}/ws?t=${encodeURIComponent(token)}&cid=${cid}&name=${encodeURIComponent(myName)}`);
-    ws.onopen = () => { retry = 0; };
-    ws.onmessage = (e) => {
-      const msg = JSON.parse(e.data);
+    const q = new URLSearchParams({ t: token, cid, name: myName, epoch, since: String(lastSeq) });
+    return `${proto}://${location.host}/ws?${q}`;
+  }
+
+  function connect() {
+    clearTimeout(retryTimer);
+    if (ws) { ws.onclose = ws.onmessage = ws.onerror = null; try { ws.close(); } catch { /* already gone */ } }
+    const my = ++gen;
+    const sock = new WebSocket(wsUrl());
+    ws = sock;
+    setStatus(false, 'connecting…');
+    sock.onopen = () => { if (my === gen) { retry = 0; lastHeard = Date.now(); } };
+    sock.onmessage = (e) => {
+      if (my !== gen) return;
+      lastHeard = Date.now();
+      let msg;
+      try { msg = JSON.parse(e.data); } catch { return; }
       if (msg.type === 'hello') {
         webId = msg.id;
+        if (msg.epoch !== epoch) { epoch = msg.epoch; lastSeq = 0; store.set('snap.epoch', epoch); store.set('snap.seq', '0'); }
         $('targetName').textContent = msg.device.name;
         $('targetIcon').textContent = { mac: '💻', windows: '🖥️', linux: '🐧' }[msg.device.platform] || '💻';
         setStatus(true, 'connected');
-      } else if (msg.type === 'file') addFile(msg);
-      else if (msg.type === 'text') addText(msg);
+      } else if (msg.type === 'file' || msg.type === 'text') {
+        receive(msg);
+      }
     };
-    ws.onclose = (e) => {
+    sock.onclose = (e) => {
+      if (my !== gen) return;
+      ws = null;
       webId = null;
-      if (e.code === 4001) { store.set('snap.token', ''); $('app').hidden = true; $('gate').hidden = false; setStatus(false, 'link expired'); return; }
+      if (e.code === 4001) { store.set('snap.token', ''); $('app').hidden = true; $('gate').hidden = false; setStatus(false, 'link expired — scan the QR again'); return; }
       setStatus(false, 'reconnecting…');
-      setTimeout(connect, Math.min(8000, 500 * 2 ** retry++));
+      retryTimer = setTimeout(connect, Math.min(5000, 400 * 2 ** retry++));
     };
   }
+
+  function send(obj) {
+    if (ws && ws.readyState === 1) { try { ws.send(JSON.stringify(obj)); } catch { /* closing */ } }
+  }
+
+  // A socket can look open while being dead (phone slept, Wi‑Fi switched). Ping it and
+  // reconnect if the computer stays silent — reconnecting also fetches anything missed.
+  setInterval(() => {
+    if (document.hidden) return;
+    if (!ws || ws.readyState > 1) return connect();
+    if (ws.readyState === 1) {
+      if (Date.now() - lastHeard > 25000) return connect();
+      send({ type: 'ping' });
+    }
+  }, 8000);
+
+  function wakeUp() {
+    if (document.hidden) return;
+    if (!ws || ws.readyState !== 1) return connect();
+    const asked = Date.now();
+    send({ type: 'ping' });
+    setTimeout(() => { if (lastHeard < asked) connect(); }, 2500);
+  }
+  document.addEventListener('visibilitychange', wakeUp);
+  window.addEventListener('pageshow', wakeUp);
+  window.addEventListener('focus', wakeUp);
+  window.addEventListener('online', () => connect());
   connect();
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && (!ws || ws.readyState > 1)) connect();
-  });
 
   /* ---------------- inbox ---------------- */
-  function addItem(node) {
-    $('empty')?.remove();
-    $('inbox').prepend(node);
-    if (navigator.vibrate) navigator.vibrate(30);
+  function receive(msg) {
+    const key = `${epoch}:${msg.seq}`;
+    if (msg.seq > lastSeq) { lastSeq = msg.seq; store.set('snap.seq', String(lastSeq)); }
+    if (!inbox.some((it) => it.key === key)) {
+      const item = { key, type: msg.type, from: msg.from, ts: msg.ts || Date.now(), text: msg.text, kind: msg.kind, name: msg.name, size: msg.size, url: msg.url };
+      inbox.unshift(item);
+      inbox = inbox.slice(0, INBOX_MAX);
+      store.set('snap.inbox', JSON.stringify(inbox));
+      render(item, true);
+    }
+    send({ type: 'ack', seq: lastSeq }); // tells the computer it arrived
   }
 
-  function addFile(msg) {
+  function render(item, fresh) {
+    const el = item.type === 'file' ? fileCard(item) : textCard(item);
+    $('empty')?.remove();
+    $('clearInbox').hidden = false;
+    if (fresh) {
+      $('inbox').prepend(el);
+      el.classList.add('fresh');
+      el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      if (navigator.vibrate) navigator.vibrate(30);
+      toast(item.type === 'file' ? `${item.name} received — tap Save` : 'New text received');
+    } else {
+      $('inbox').appendChild(el);
+    }
+  }
+
+  const when = (ts) => {
+    const d = new Date(ts);
+    const today = new Date().toDateString() === d.toDateString();
+    return (today ? '' : d.toLocaleDateString([], { day: 'numeric', month: 'short' }) + ' ') + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
+
+  function fileCard(item) {
     const el = document.createElement('div');
     el.className = 'card item';
     el.innerHTML = `<div class="top"><span class="name"></span><a class="btn accent" download>Save</a></div><div class="meta"></div>`;
-    el.querySelector('.name').textContent = msg.name;
-    el.querySelector('.meta').textContent = `${fmt(msg.size)} · from ${msg.from}`;
+    el.querySelector('.name').textContent = item.name;
+    el.querySelector('.meta').textContent = `${fmt(item.size)} · from ${item.from} · ${when(item.ts)}`;
     const a = el.querySelector('a');
-    a.href = msg.url;
-    a.setAttribute('download', msg.name);
-    addItem(el);
-    toast(`${msg.name} received — tap Save`);
+    a.href = item.url;
+    a.setAttribute('download', item.name);
+    return el;
   }
 
-  function addText(msg) {
+  function textCard(item) {
     const el = document.createElement('div');
     el.className = 'card item';
     el.innerHTML = `<pre></pre><div class="top"><span class="meta" style="flex:1"></span><button class="btn">Copy</button></div>`;
-    el.querySelector('pre').textContent = msg.text;
-    el.querySelector('.meta').textContent = `from ${msg.from}${msg.kind === 'clipboard' ? ' · clipboard' : ''}`;
-    const linkMatch = /^https?:\/\/\S+$/.test(msg.text.trim());
-    if (linkMatch) {
+    el.querySelector('pre').textContent = item.text;
+    el.querySelector('.meta').textContent = `from ${item.from}${item.kind === 'clipboard' ? ' · clipboard' : ''} · ${when(item.ts)}`;
+    const t = (item.text || '').trim();
+    if (/^https?:\/\/\S+$/.test(t)) {
       const open = document.createElement('a');
-      open.className = 'btn ghost'; open.textContent = 'Open'; open.href = msg.text.trim(); open.target = '_blank'; open.rel = 'noopener';
+      open.className = 'btn ghost'; open.textContent = 'Open'; open.href = t; open.target = '_blank'; open.rel = 'noopener';
       el.querySelector('.top').insertBefore(open, el.querySelector('button'));
     }
-    el.querySelector('button').onclick = () => copy(msg.text);
-    addItem(el);
+    el.querySelector('button').onclick = () => copy(item.text);
+    return el;
   }
+
+  inbox.forEach((it) => render(it, false));
+  $('clearInbox').onclick = () => {
+    inbox = [];
+    store.set('snap.inbox', '[]');
+    $('inbox').innerHTML = '<div class="empty" id="empty">Files and text sent from the computer appear here.</div>';
+    $('clearInbox').hidden = true;
+  };
 
   async function copy(text) {
     try { await navigator.clipboard.writeText(text); }

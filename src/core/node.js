@@ -31,7 +31,10 @@ const { randomId, lanAddresses, uniquePath, platformLabel, safeEqual, safeFileNa
 const VERSION = require('../../package.json').version;
 const DEFAULT_PORT = 47321;
 const BATCH_TTL_MS = 5 * 60 * 1000;
-const STAGE_TTL_MS = 30 * 60 * 1000;
+const STAGE_TTL_MS = 24 * 60 * 60 * 1000; // links stay valid for phones that were asleep
+const OUTBOX_MAX = 100;                     // messages kept per phone for replay
+const WEB_PEER_TTL_MS = 12 * 60 * 60 * 1000; // forget a phone that has been away this long
+const ACK_WAIT_MS = 2500;
 const MAX_TEXT_BYTES = 1024 * 1024;
 
 const MIME = {
@@ -69,6 +72,8 @@ class SnapNode extends EventEmitter {
     this.approve = o.approve || (async () => 'deny');
     this.acceptClipboard = o.acceptClipboard || (() => true);
     this.webRoot = o.webRoot || path.join(__dirname, '..', '..', 'web');
+    this.heartbeatMs = o.heartbeatMs || 15000;
+    this.epoch = randomId(4); // changes on every start, so phones know old sequence numbers are void
 
     this.peers = new Map(); // id -> {id,name,platform,host,port,kind,ws?}
     this.batches = new Map(); // `${peerId}:${batchId}` -> expiry
@@ -111,7 +116,7 @@ class SnapNode extends EventEmitter {
 
   async stop() {
     clearInterval(this._gcTimer);
-    for (const p of this.peers.values()) p.ws?.close();
+    for (const p of this.peers.values()) for (const ws of p.sockets || []) ws.terminate();
     this.wss?.close();
     if (!this.server) return;
     const closed = new Promise((r) => this.server.close(() => r()));
@@ -130,7 +135,11 @@ class SnapNode extends EventEmitter {
 
   resetWebToken() {
     this.webToken = randomId(12);
-    for (const p of [...this.peers.values()]) if (p.kind === 'web') p.ws.close(4001, 'token reset');
+    for (const p of [...this.peers.values()]) {
+      if (p.kind !== 'web') continue;
+      for (const ws of p.sockets) ws.close(4001, 'token reset');
+      this.removePeer(p.id);
+    }
     return this.webToken;
   }
 
@@ -169,6 +178,8 @@ class SnapNode extends EventEmitter {
     return {
       id: p.id, name: p.name, platform: p.platform, kind: p.kind, host: p.host, port: p.port,
       trusted: !!(this.trust.outgoing[p.id] && this.trust.incoming[p.id]),
+      online: p.kind === 'web' ? p.sockets.size > 0 : true,
+      ...(p.kind === 'web' ? { pending: p.outbox.filter((m) => m.seq > p.acked).length } : {}),
     };
   }
 
@@ -186,7 +197,7 @@ class SnapNode extends EventEmitter {
 
   /**
    * Send files to a peer. Desktop peers get them over HTTP; phones get a download link via WS.
-   * @returns {Promise<{sent:number}>}
+   * @returns {Promise<{sent:number, delivered:boolean}>}  delivered=false: queued for a phone that is asleep
    */
   async sendFiles(peerId, filePaths) {
     const peer = this.peers.get(peerId);
@@ -195,29 +206,29 @@ class SnapNode extends EventEmitter {
     if (!files.length) throw new Error('Nothing to send (folders are not supported yet)');
 
     if (peer.kind === 'web') {
-      for (const f of files) {
+      const acks = files.map((f) => {
         const id = randomId(12);
         const size = fs.statSync(f).size;
         this.staged.set(id, { path: f, name: path.basename(f), size, expires: Date.now() + STAGE_TTL_MS });
-        peer.ws.send(JSON.stringify({
+        return this._pushToWeb(peer, {
           type: 'file', id, name: path.basename(f), size, from: this.name,
           url: `/api/download/${id}?t=${encodeURIComponent(this.webToken)}`,
-        }));
-      }
-      return { sent: files.length };
+        });
+      });
+      const delivered = (await Promise.all(acks)).every(Boolean);
+      return { sent: files.length, delivered };
     }
 
     const batch = randomId(6);
     for (const f of files) await this._uploadTo(peer, f, batch);
-    return { sent: files.length };
+    return { sent: files.length, delivered: true };
   }
 
   async sendText(peerId, text, kind = 'message') {
     const peer = this.peers.get(peerId);
     if (!peer) throw new Error('Unknown device');
     if (peer.kind === 'web') {
-      peer.ws.send(JSON.stringify({ type: 'text', text, kind, from: this.name }));
-      return;
+      return { delivered: await this._pushToWeb(peer, { type: 'text', text, kind, from: this.name }) };
     }
     const body = Buffer.from(JSON.stringify({ text, kind }));
     const res = await httpJson({
@@ -226,6 +237,7 @@ class SnapNode extends EventEmitter {
       timeout: kind === 'clipboard' ? 5000 : 90 * 1000,
     });
     this._learnKey(peer, res);
+    return { delivered: true };
   }
 
   _authHeaders(peer) {
@@ -426,6 +438,13 @@ class SnapNode extends EventEmitter {
 
   /* ------------------------------------------------------------------ phones (WebSocket) */
 
+  /*
+   * Delivery to phones has to survive the phone going to sleep: mobile browsers freeze
+   * background tabs and drop sockets without closing them. So every message goes into a
+   * per-phone outbox with a sequence number; the phone acks what it has shown and, on
+   * reconnect, says "since N" — everything newer is replayed. Heartbeats in both
+   * directions catch sockets that look open but are dead.
+   */
   _upgrade(req, socket, head) {
     const url = new URL(req.url, 'http://x');
     if (url.pathname !== '/ws' || !safeEqual(url.searchParams.get('t') || '', this.webToken)) {
@@ -435,20 +454,76 @@ class SnapNode extends EventEmitter {
     this.wss.handleUpgrade(req, socket, head, (ws) => {
       const wid = 'web-' + (url.searchParams.get('cid') || randomId(4)).replace(/[^a-z0-9]/gi, '').slice(0, 16);
       const name = (url.searchParams.get('name') || 'Phone').slice(0, 40);
-      const platform = /iphone|ipad|ios/i.test(req.headers['user-agent'] || '') ? 'ios'
-        : /android/i.test(req.headers['user-agent'] || '') ? 'android' : 'web';
-      this.peers.get(wid)?.ws?.close(4000, 'replaced');
-      const peer = { id: wid, name, platform, kind: 'web', ws, host: (req.socket.remoteAddress || '').replace(/^::ffff:/, '') };
-      this.peers.set(wid, peer);
-      this.emit('peer-up', this.publicPeer(peer));
-      ws.send(JSON.stringify({ type: 'hello', id: wid, device: this.info() }));
-      const ping = setInterval(() => ws.readyState === 1 && ws.ping(), 20000);
+      const ua = req.headers['user-agent'] || '';
+      const platform = /iphone|ipad|ios/i.test(ua) ? 'ios' : /android/i.test(ua) ? 'android' : 'web';
+      const sameEpoch = url.searchParams.get('epoch') === this.epoch;
+      const since = sameEpoch ? Number(url.searchParams.get('since')) || 0 : 0;
+
+      let peer = this.peers.get(wid);
+      const wasOnline = !!peer?.sockets.size;
+      if (!peer) {
+        peer = { id: wid, kind: 'web', sockets: new Set(), outbox: [], seq: 0, acked: 0, waiters: new Map() };
+        this.peers.set(wid, peer);
+      }
+      Object.assign(peer, { name, platform, host: (req.socket.remoteAddress || '').replace(/^::ffff:/, ''), lastSeen: Date.now() });
+      peer.acked = Math.max(peer.acked, since);
+      peer.sockets.add(ws); // several tabs / overlapping reconnects are fine — all get messages
+      this._settleAcks(peer);
+      this.emit(wasOnline ? 'peer-update' : 'peer-up', this.publicPeer(peer));
+
+      ws.send(JSON.stringify({ type: 'hello', id: wid, epoch: this.epoch, device: this.info() }));
+      for (const m of peer.outbox) if (m.seq > since) ws.send(JSON.stringify(m));
+
+      ws.isAlive = true;
+      ws.on('pong', () => { ws.isAlive = true; });
+      ws.on('message', (raw) => {
+        ws.isAlive = true;
+        peer.lastSeen = Date.now();
+        let msg;
+        try { msg = JSON.parse(raw); } catch { return; }
+        if (msg.type === 'ping') ws.send(JSON.stringify({ type: 'pong' }));
+        else if (msg.type === 'ack' && Number(msg.seq) > peer.acked) {
+          peer.acked = Math.min(Number(msg.seq), peer.seq);
+          this._settleAcks(peer);
+          this.emit('peer-update', this.publicPeer(peer));
+        }
+      });
+      const beat = setInterval(() => {
+        if (!ws.isAlive) return ws.terminate(); // no pong since last beat: the phone is gone
+        ws.isAlive = false;
+        try { ws.ping(); } catch { /* closing */ }
+      }, this.heartbeatMs);
       ws.on('close', () => {
-        clearInterval(ping);
-        if (this.peers.get(wid)?.ws === ws) this.removePeer(wid);
+        clearInterval(beat);
+        peer.sockets.delete(ws);
+        peer.lastSeen = Date.now();
+        // Keep the phone listed (offline): messages sent now are queued for its return.
+        if (!peer.sockets.size && this.peers.get(wid) === peer) this.emit('peer-update', this.publicPeer(peer));
       });
       ws.on('error', () => {});
     });
+  }
+
+  /** Queue a message for a phone and resolve true once the phone confirms it, false if it is asleep. */
+  _pushToWeb(peer, msg) {
+    msg.seq = ++peer.seq;
+    msg.ts = Date.now();
+    peer.outbox.push(msg);
+    if (peer.outbox.length > OUTBOX_MAX) peer.outbox.splice(0, peer.outbox.length - OUTBOX_MAX);
+    const data = JSON.stringify(msg);
+    for (const ws of peer.sockets) if (ws.readyState === 1) ws.send(data);
+    this.emit('peer-update', this.publicPeer(peer));
+    if (!peer.sockets.size) return Promise.resolve(false);
+    return new Promise((resolve) => {
+      const t = setTimeout(() => { peer.waiters.delete(msg.seq); resolve(false); }, ACK_WAIT_MS);
+      peer.waiters.set(msg.seq, (ok) => { clearTimeout(t); resolve(ok); });
+    });
+  }
+
+  _settleAcks(peer) {
+    for (const [seq, done] of peer.waiters) {
+      if (seq <= peer.acked) { peer.waiters.delete(seq); done(true); }
+    }
   }
 
   /* ------------------------------------------------------------------ helpers */
@@ -462,6 +537,9 @@ class SnapNode extends EventEmitter {
     const now = Date.now();
     for (const [k, exp] of this.batches) if (exp < now) this.batches.delete(k);
     for (const [k, s] of this.staged) if (s.expires < now) this.staged.delete(k);
+    for (const p of [...this.peers.values()]) {
+      if (p.kind === 'web' && !p.sockets.size && now - p.lastSeen > WEB_PEER_TTL_MS) this.removePeer(p.id);
+    }
   }
 }
 

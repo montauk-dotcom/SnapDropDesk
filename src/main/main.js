@@ -17,6 +17,7 @@ const { ClipboardSync } = require('../core/clipboard-sync');
 const { lanAddresses } = require('../core/util');
 const { Settings } = require('./settings');
 const integration = require('./integration');
+const { isStatusItemHidden } = require('./notch');
 
 const ASSETS = path.join(__dirname, '..', '..', 'assets');
 const isMac = process.platform === 'darwin';
@@ -66,6 +67,11 @@ if (!app.requestSingleInstanceLock()) {
 
     createWindow();
     createTray();
+    if (isMac) {
+      setTimeout(checkTrayVisible, 2000); // macOS needs a moment to lay out the menu bar
+      setInterval(checkTrayVisible, 60 * 1000).unref?.(); // other apps starting can push us out
+      screen.on('display-metrics-changed', () => setTimeout(checkTrayVisible, 1000));
+    }
     registerHotkey();
     queueFiles(filesFromArgv(process.argv));
 
@@ -94,7 +100,8 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   // macOS: opening the app again from Finder / Launchpad / Spotlight while it runs → show it.
-  app.on('activate', () => { if (win) showWindow('tray'); });
+  app.on('activate', () => { if (win) showWindow(trayVisibleSafe() ? 'tray' : 'cursor'); });
+  const trayVisibleSafe = () => { try { return !!tray && !trayHidden(); } catch { return false; } };
 
   app.on('second-instance', (_e, argv) => {
     const files = filesFromArgv(argv);
@@ -224,7 +231,7 @@ if (!app.requestSingleInstanceLock()) {
     if (!win) return;
     const [w, h] = win.getSize();
     let x, y;
-    if (anchor === 'tray' && tray) {
+    if (anchor === 'tray' && trayVisibleSafe()) { // hidden icon: open near the mouse instead
       const b = tray.getBounds();
       const wa = screen.getDisplayMatching(b).workArea;
       x = Math.round(b.x + b.width / 2 - w / 2);
@@ -305,6 +312,7 @@ if (!app.requestSingleInstanceLock()) {
 
   function refreshTray() {
     if (tray && !tray.isDestroyed()) tray.setContextMenu(buildMenu());
+    if (isMac && (settings.get('showInDock') || dockFallback)) app.dock.setMenu(buildMenu());
   }
 
   function buildMenu() {
@@ -350,10 +358,51 @@ if (!app.requestSingleInstanceLock()) {
   }
 
   /** macOS: Dock icon is optional (useful when a crowded menu bar / notch hides the icon). */
+  let dockFallback = false; // Dock icon shown because the menu-bar item is hidden
+
   function applyDock() {
     if (!isMac) return;
-    if (settings.get('showInDock')) app.dock.show();
-    else app.dock.hide();
+    if (settings.get('showInDock') || dockFallback) {
+      app.dock.show();
+      app.dock.setMenu(buildMenu()); // right-click the Dock icon: same menu, incl. Quit
+    } else {
+      app.dock.hide();
+    }
+  }
+
+  /**
+   * macOS hides menu-bar items that don't fit right of the camera notch, without telling the
+   * app. Newest items go leftmost, so a freshly installed app is the first to disappear.
+   * On a notched screen no status item can sit left of the notch, so if ours is there (or has
+   * no size) it is hidden: fall back to a Dock icon so the user can still reach the app.
+   */
+  function trayHidden() {
+    const b = tray.getBounds();
+    const d = screen.getDisplayNearestPoint({ x: b.x + b.width / 2, y: b.y + b.height / 2 });
+    return isStatusItemHidden(b, d);
+  }
+
+  let hiddenWarned = false;
+  function checkTrayVisible() {
+    if (!isMac || !tray || tray.isDestroyed()) return;
+    let hidden = false;
+    try { hidden = trayHidden(); } catch { return; }
+    if (!hidden) return;
+    console.warn('[tray] menu-bar item looks hidden (notch / full menu bar) — showing Dock icon');
+    if (!dockFallback) { dockFallback = true; applyDock(); }
+    if (hiddenWarned) return;
+    hiddenWarned = true;
+    const ru = app.getLocale().startsWith('ru');
+    dialog.showMessageBox({
+      type: 'info',
+      title: 'SnapDrop Desk',
+      message: ru ? 'Значку SDD не хватило места в верхней панели' : 'The SDD icon does not fit in the menu bar',
+      detail: ru
+        ? 'macOS прячет значки, которые не помещаются справа от выреза камеры. Пока что SnapDrop Desk есть в Доке: клик открывает окно, правый клик — меню и «Quit».\n\nЧтобы вернуть SDD наверх: зажми ⌘ и перетащи пару ненужных значков вниз из панели (или закрой их приложения), затем перезапусти SnapDrop Desk.'
+        : 'macOS hides menu-bar icons that don’t fit to the right of the camera notch. For now SnapDrop Desk is in the Dock: click opens the window, right-click shows the menu and Quit.\n\nTo get SDD back: hold ⌘ and drag a few icons you don’t need out of the menu bar (or quit their apps), then restart SnapDrop Desk.',
+      buttons: ['OK'],
+      noLink: true,
+    }).then(() => showWindow('cursor'));
   }
 
   async function pickAndQueueFiles() {
